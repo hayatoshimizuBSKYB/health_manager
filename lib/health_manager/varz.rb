@@ -7,7 +7,7 @@ module HealthManager
     REALTIME_STATS = [:total_apps,
                       :total_instances,
                       :running_instances,
-                      :down_instances,
+                      :missing_instances,
                       :crashed_instances,
                       :flapping_instances,
                       :running]
@@ -20,7 +20,7 @@ module HealthManager
       declare_counter :total_apps
       declare_counter :total_instances
       declare_counter :running_instances
-      declare_counter :down_instances
+      declare_counter :missing_instances
       declare_counter :crashed_instances
       declare_counter :flapping_instances
 
@@ -44,6 +44,9 @@ module HealthManager
       declare_counter :healthmanager_status_msgs_received
       declare_counter :healthmanager_health_request_msgs_received
 
+      declare_counter :analysis_loop_duration
+      declare_counter :bulk_update_loop_duration
+
       declare_counter :varz_publishes
       declare_counter :varz_holds
       declare_node    :droplets # FIXIT: remove once ready for production
@@ -55,6 +58,24 @@ module HealthManager
 
     def reset_expected_stats
       EXPECTED_STATS.each { |s| hold(s); reset(s) }
+    end
+
+    def release_realtime_stats
+      REALTIME_STATS.each { |s| release(s) }
+    end
+
+    def release_expected_stats
+      EXPECTED_STATS.each { |s| release(s) }
+    end
+
+    def publish_realtime_stats
+      release_realtime_stats
+      publish
+    end
+
+    def publish_expected_stats
+      release_expected_stats
+      publish
     end
 
     def update_realtime_stats_for_droplet(droplet)
@@ -73,7 +94,7 @@ module HealthManager
           #e.g., [:running, :frameworks, 'sinatra']
           #or,   [:running, :runtimes, 'ruby19' ]
 
-          create_runtime_metrics(*path)
+          create_realtime_metrics(*path)
 
           inc(*path, :apps)
           add(*path, :crashes, droplet.crashes.size)
@@ -92,7 +113,7 @@ module HealthManager
         when STARTING, RUNNING
           inc(*path, :running_instances)
         when DOWN
-          inc(*path, :down_instances)
+          inc(*path, :missing_instances)
         when FLAPPING
           inc(*path, :flapping_instances)
         end
@@ -101,7 +122,7 @@ module HealthManager
 
     def update_expected_stats_for_droplet(droplet_hash)
       ['framework', 'runtime'].each do |metric|
-        path = [:total, "#{metric}s".to_sym, droplet_hash['metric']]
+        path = [:total, "#{metric}s".to_sym, droplet_hash[metric]]
 
         create_db_metrics(*path)
 
@@ -117,24 +138,14 @@ module HealthManager
       end
     end
 
-    def publish_realtime_stats
-      REALTIME_STATS.each { |s| varz.release(s) }
-      publish
-    end
-
-    def publish_expected_stats
-      EXPECTED_STATS.each { |s| varz.release(s) }
-      publish
-    end
-
     private
-    def create_runtime_metrics(*path)
+    def create_realtime_metrics(*path)
       declare_node(*path)
       set(*path, {
             :apps => 0,
             :crashes => 0,
             :running_instances => 0,
-            :down_instances => 0,
+            :missing_instances => 0,
             :flapping_instances => 0
           }) if get(*path).empty?
     end

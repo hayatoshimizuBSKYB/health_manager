@@ -19,6 +19,8 @@ module HealthManager
   NORMAL_PRIORITY        = 1000
   HIGH_PRIORITY          = 1_000_000
 
+  ITERATIONS_PER_QUANTUM = 20
+
   DEFAULTS = {
     :cc_partition => "default",
     :shadow_mode => "disable",
@@ -27,7 +29,7 @@ module HealthManager
     :analysis_delay           => 5,
     :droplets_analysis         => 20,
     :droplet_lost             => 30,
-    :postpone_update          => 2,
+    :postpone_update          => 30,
     :request_queue            => 1,
     :queue_batch_size         => 40,
     :nats_request_timeout     => 5,

@@ -98,10 +98,10 @@ module HealthManager
     end
 
     def to_json(*a)
-      { "json_class" => self.class.name,
+      encode_json({ "json_class" => self.class.name,
       }.merge(self.instance_variables.inject({}) {|h, v|
                 h[v] = self.instance_variable_get(v); h
-              }).to_json(*a)
+              }))
     end
 
     def restart_pending?(index)
@@ -187,6 +187,7 @@ module HealthManager
       end
 
       unless extra_instances.empty?
+        logger.info("extra instances: #{extra_instances.inspect}")
         notify(:extra_instances, extra_instances)
       end
     end
@@ -266,7 +267,6 @@ module HealthManager
 
     def process_exit_stopped(message)
       reset_missing_indices
-      @state = STOPPED
       notify(:exit_stopped, message)
     end
 
