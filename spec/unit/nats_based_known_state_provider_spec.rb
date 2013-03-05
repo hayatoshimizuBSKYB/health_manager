@@ -2,17 +2,19 @@ require 'spec_helper'
 
 describe HealthManager do
 
-  include HealthManager::Common
+  before(:each) do
+    HealthManager::AppState.flapping_death = 3
+  end
 
-  after :each do
-    AppState.remove_all_listeners
+  after(:each) do
+    HealthManager::AppState.remove_all_listeners
   end
 
   describe "AppStateProvider" do
     describe "NatsBasedKnownStateProvider" do
 
       before(:each) do
-        @nb = NatsBasedKnownStateProvider.new(build_valid_config)
+        @nb = HealthManager::NatsBasedKnownStateProvider.new(build_valid_config)
       end
 
       it 'should subscribe to heartbeat, droplet.exited/updated messages' do
@@ -22,31 +24,69 @@ describe HealthManager do
         @nb.start
       end
 
-      it 'should forward heartbeats' do
-        app, expected = make_app
-        app1 = @nb.get_droplet(app.id)
-        app1.set_expected_state(expected)
+      context 'AppState updating' do
 
-        instance = app1.get_instance(app.live_version, 0)
-        instance['state'].should == 'DOWN'
-        instance['last_heartbeat'].should be_nil
+        before(:each) do
+          app, expected = make_app
+          @app = @nb.get_droplet(app.id)
+          @app.set_expected_state(expected)
+          instance = @app.get_instance(@app.live_version, 0)
+          instance['state'].should == 'DOWN'
+          instance['last_heartbeat'].should be_nil
+        end
 
-        hb = make_heartbeat([app])
-        @nb.process_heartbeat(encode_json(hb))
+        def make_and_send_heartbeat
+          hb = make_heartbeat([@app])
+          @nb.process_heartbeat(encode_json(hb))
+        end
 
-        instance = app1.get_instance(app.live_version, 0)
-        instance['state'].should == 'RUNNING'
-        instance['last_heartbeat'].should_not be_nil
+        def make_and_send_exited_message(reason)
+          msg = make_exited_message(@app, {'reason'=>reason})
+          @nb.process_droplet_exited(encode_json(msg))
+        end
+
+        def check_instance_state(state='RUNNING')
+          instance = @app.get_instance(@app.live_version, 0)
+          instance['state'].should == state
+          instance['last_heartbeat'].should_not be_nil
+        end
+
+        it 'should forward heartbeats' do
+          make_and_send_heartbeat
+          check_instance_state
+        end
+
+        it 'should mark instances that crashed as CRASHED' do
+          make_and_send_heartbeat
+          check_instance_state('RUNNING')
+
+          make_and_send_exited_message('CRASHED')
+          check_instance_state('CRASHED')
+
+          make_and_send_heartbeat
+          check_instance_state('RUNNING')
+        end
+
+        it 'should mark instances that were stopped or evacuated as DOWN' do
+          make_and_send_heartbeat
+          check_instance_state('RUNNING')
+
+          ['STOPPED','DEA_SHUTDOWN','DEA_EVACUATION'].each do |reason|
+            make_and_send_exited_message(reason)
+            check_instance_state('DOWN')
+            make_and_send_heartbeat
+            check_instance_state('RUNNING')
+          end
+        end
       end
     end
   end
 
   def build_valid_config(config = {})
-    @config = config
-    varz = Varz.new(@config)
+    varz = HealthManager::Varz.new(config)
     varz.prepare
-    register_hm_component(:varz, varz)
-    register_hm_component(:scheduler, @scheduler = Scheduler.new(@config))
-    @config
+    varz.register_hm_component(:varz, varz)
+    varz.register_hm_component(:scheduler, @scheduler = HealthManager::Scheduler.new(config))
+    config
   end
 end
