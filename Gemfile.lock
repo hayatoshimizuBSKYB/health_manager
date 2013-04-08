@@ -38,6 +38,7 @@ GEM
       em-socksify
       eventmachine
       http_parser.rb (>= 0.5.1)
+      cookiejar
     em-socksify (0.1.0)
       eventmachine
     eventmachine (1.0.0)
