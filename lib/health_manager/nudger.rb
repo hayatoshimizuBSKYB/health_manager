@@ -36,7 +36,7 @@ module HealthManager
 
     def stop_instances_immediately(app, instances_and_reasons)
       instances_and_reasons.each do |instance, reason|
-        logger.info("nudger: stopping instance #{instance}. Reason: #{reason}")
+        logger.info("nudger: stopping instance #{instance} for #{app.id}, reason: #{reason}")
       end
 
       instances = instances_and_reasons.map { |inst, _| inst }
@@ -70,11 +70,10 @@ module HealthManager
       }
     end
 
-    private
-
     def queue(message, priority = NORMAL_PRIORITY)
       logger.debug { "nudger: queueing: #{message}, #{priority}" }
-      key = message.clone.delete(:last_updated)
+      key = message.clone
+      key.delete(:last_updated)
       @queue.insert(message, priority, key)
       varz.set(:queue_length, @queue.size)
     end

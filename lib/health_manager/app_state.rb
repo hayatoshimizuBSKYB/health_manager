@@ -4,19 +4,24 @@ module HealthManager
   #this class provides answers about droplet's State
   class AppState
     include HealthManager::Common
+
     class << self
       attr_accessor :heartbeat_deadline
+      attr_accessor :expected_state_update_deadline
       attr_accessor :flapping_timeout
       attr_accessor :flapping_death
       attr_accessor :droplet_gc_grace_period
 
       def known_event_types
-        [:missing_instances,
-         :extra_instances,
-         :exit_crashed,
-         :exit_stopped,
-         :exit_dea,
-         :droplet_updated]
+        [
+          :extra_app,
+          :missing_instances,
+          :extra_instances,
+          :exit_crashed,
+          :exit_stopped,
+          :exit_dea,
+          :droplet_updated,
+        ]
       end
 
       def add_listener(event_type, &block)
@@ -48,12 +53,10 @@ module HealthManager
     attr_reader :state
     attr_reader :live_version
     attr_reader :num_instances
-    attr_reader :framework, :runtime
     attr_reader :package_state
     attr_reader :last_updated
     attr_reader :versions, :crashes
     attr_reader :pending_restarts
-
     attr_reader :existence_justified_at
 
     def initialize(id)
@@ -61,9 +64,12 @@ module HealthManager
       @num_instances = 0
       @versions = {}
       @crashes = {}
-      @stale = true # start out as stale until expected state is set
       @pending_restarts = {}
       reset_missing_indices
+
+      # start out as stale until expected state is set
+      @expected_state_update_required = true
+      @expected_state_update_timestamp = now
       justify_existence_for_now
     end
 
@@ -77,20 +83,16 @@ module HealthManager
 
     def set_expected_state(original_values)
       values = original_values.dup # preserve the original
-      [:state,
-       :num_instances,
-       :live_version,
-       :framework,
-       :runtime,
-       :package_state,
-       :last_updated].each do |k|
 
-        v = values.delete(k)
-        raise ArgumentError.new("Value #{k} is required, missing from #{original_values}") unless v
-        self.instance_variable_set("@#{k.to_s}",v)
+      [:state, :num_instances, :live_version, :package_state, :last_updated].each do |k|
+        unless v = values.delete(k)
+          raise ArgumentError, "Value #{k} is required, missing from #{original_values}"
+        end
+        instance_variable_set("@#{k.to_s}", v)
       end
-      raise ArgumentError.new("unsupported keys: #{values.keys}") unless values.empty?
-      @stale = false
+
+      @expected_state_update_required = false
+      @expected_state_update_timestamp = now
       justify_existence_for_now
     end
 
@@ -99,10 +101,9 @@ module HealthManager
     end
 
     def to_json(*a)
-      encode_json({ "json_class" => self.class.name,
-      }.merge(self.instance_variables.inject({}) {|h, v|
-                h[v] = self.instance_variable_get(v); h
-              }))
+      encode_json(self.instance_variables.inject({}) do |h, v|
+        h[v[1..-1]] = self.instance_variable_get(v); h
+      end)
     end
 
     def restart_pending?(index)
@@ -138,7 +139,6 @@ module HealthManager
           'crash_timestamp' => beat['state_timestamp']
         }
       end
-      justify_existence_for_now
     end
 
     def check_for_missing_indices
@@ -234,6 +234,7 @@ module HealthManager
 
     #check for all anomalies and trigger appropriate events so that listeners can take action
     def analyze
+      check_if_extra
       check_for_missing_indices
       check_and_prune_extra_indices
       prune_crashes
@@ -247,12 +248,12 @@ module HealthManager
       timestamp_fresher_than?(@reset_timestamp, AppState.heartbeat_deadline || 0)
     end
 
-    def mark_stale
-      @stale = true
+    def mark_expected_state_update_required
+      @expected_state_update_required = true
     end
 
-    def stale?
-      @stale
+    def expected_state_update_required?
+      @expected_state_update_required
     end
 
     def process_exit_dea(message)
@@ -306,6 +307,10 @@ module HealthManager
       end
     end
 
+    def all_instances
+      @versions.map { |_, v| v["instances"].values }.flatten
+    end
+
     def get_version(version = @live_version)
       @versions[version] ||= {'instances' => {}}
     end
@@ -321,6 +326,19 @@ module HealthManager
         'crash_timestamp' => -1,
         'last_action' => -1
       }
+    end
+
+    private
+
+    def check_if_extra
+      notify(:extra_app) if expected_state_update_overdue?
+    end
+
+    def expected_state_update_overdue?
+      timestamp_older_than?(
+        @expected_state_update_timestamp,
+        AppState.expected_state_update_deadline,
+      )
     end
   end
 end

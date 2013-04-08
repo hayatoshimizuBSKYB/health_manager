@@ -22,14 +22,19 @@ module HealthManager
 
       #set system-wide configurations
       AppState.heartbeat_deadline = interval(:droplet_lost)
+      AppState.expected_state_update_deadline = interval(:expected_state_lost)
       AppState.flapping_timeout = interval(:flapping_timeout)
       AppState.flapping_death = interval(:flapping_death)
       AppState.droplet_gc_grace_period = interval(:droplet_gc_grace_period)
 
+      AppState.add_listener(:extra_app) do |app_state|
+        on_extra_app(app_state)
+      end
+
       #set up listeners for anomalous events to respond with correcting actions
       AppState.add_listener(:missing_instances) do |app_state, missing_indices|
-        if app_state.stale?
-          logger.info { "harmonizer: stale: missing_instances ignored app_id=#{app_state.id} indices=#{missing_indices}" }
+        if app_state.expected_state_update_required?
+          logger.info { "harmonizer: expected_state_update_required: missing_instances ignored app_id=#{app_state.id} indices=#{missing_indices}" }
           next
         end
 
@@ -45,8 +50,8 @@ module HealthManager
       end
 
       AppState.add_listener(:extra_instances) do |app_state, extra_instances|
-        if app_state.stale?
-          logger.info { "harmonizer: stale: extra_instances ignored: #{extra_instances}" }
+        if app_state.expected_state_update_required?
+          logger.info { "harmonizer: expected_state_update_required: extra_instances ignored: #{extra_instances}" }
           next
         end
 
@@ -81,7 +86,7 @@ module HealthManager
 
       AppState.add_listener(:droplet_updated) do |app_state, message|
         logger.info { "harmonizer: droplet_updated: #{message}" }
-        app_state.mark_stale
+        app_state.mark_expected_state_update_required
         abort_all_pending_delayed_restarts(app_state)
         update_expected_state
       end
@@ -113,6 +118,13 @@ module HealthManager
           shadower.check_shadowing
         end
       end
+    end
+
+    # Currently we do not check that expected state provider
+    # is available; therefore, HM can be overly aggressive stopping apps.
+    def on_extra_app(app_state)
+      instance_ids_with_reasons = app_state.all_instances.map { |i| [i["instance"], "Extra app"] }
+      nudger.stop_instances_immediately(app_state, instance_ids_with_reasons)
     end
 
     # ------------------------------------------------------------

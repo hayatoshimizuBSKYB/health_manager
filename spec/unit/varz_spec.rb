@@ -2,11 +2,7 @@ require 'spec_helper'
 
 describe HealthManager do
   describe "Varz" do
-    before :each do
-      @v = HealthManager::Varz.new
-    end
-
-    def v; @v; end
+    let(:v) { HealthManager::Varz.new }
 
     it 'should allow declaring counters' do
       v.declare_counter :counter1
@@ -178,29 +174,29 @@ describe HealthManager do
       end
 
       it 'should return valid hm varz' do
-        v.declare_node :running, :frameworks, 'sinatra'
-        v.declare_counter :running, :frameworks, 'sinatra', :apps
+        v.declare_counter :running, :apps
 
         v.set :total_apps, 10
-        10.times { v.inc :running, :frameworks, 'sinatra', :apps }
+
+        10.times { v.inc :running, :apps }
 
         v.get(:total_apps).should == 10
-        v.get(:running, :frameworks, 'sinatra', :apps).should == 10
+        v.get(:running, :apps).should == 10
       end
 
       it 'should have hm metrics once #prepare is called' do
         v.get(:total_apps).should == 0
         v.get(:missing_instances).should == 0
 
-        v.get(:running).should == { :frameworks => {}, :runtimes => {} }
-        v.get(:total).should == { :frameworks => {}, :runtimes => {} }
+        v.get(:running).should == {}
+        v.get(:total).should == {}
       end
 
       it 'should update realtime stats according to droplet data' do
         app, _ = make_app({:num_instances => 2})
         v.update_realtime_stats_for_droplet(app)
         v.get(:total_apps).should == 1
-        v.get(:running, :frameworks, 'sinatra', :missing_instances) == 2
+        v.get(:running, :missing_instances) == 2
       end
 
       describe 'expected stats' do
@@ -211,6 +207,22 @@ describe HealthManager do
           v.held?(:total).should be_true
           v.release_expected_stats
           v.held?(:total).should be_false
+        end
+
+        describe '#expected_stats_held?' do
+          it 'returns true when all are held' do
+            v.reset_expected_stats
+            expect(v.expected_stats_held?).to eq(true)
+          end
+
+          it 'return false when all are not held' do
+            expect(v.expected_stats_held?).to eq(false)
+          end
+
+          it 'raises when some are held and some are not' do
+            v.hold(:total)
+            expect { v.expected_stats_held? }.to raise_error(/inconsistent/)
+          end
         end
 
         it 'should calculate elapsed time' do

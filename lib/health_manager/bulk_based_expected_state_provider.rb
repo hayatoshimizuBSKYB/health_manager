@@ -22,8 +22,6 @@ module HealthManager
                                :num_instances => expected['instances'],
                                :state         => expected['state'],
                                :live_version  => expected['version'],
-                               :framework     => expected['framework'],
-                               :runtime       => expected['runtime'],
                                :package_state => expected['package_state'],
                                :last_updated  => parse_utc(expected['updated_at']))
     end
@@ -38,7 +36,7 @@ module HealthManager
         http.callback do
           if http.response_header.status != 200
             logger.error("bulk: request problem. Response: #{http.response_header} #{http.response}")
-            @user = @password = nil #ensure re-acquisition of credentials
+            reset_credentials
             next
           end
 
@@ -51,12 +49,14 @@ module HealthManager
 
         http.errback do
           logger.error("bulk: error: talking to bulk API at #{counts_url}")
-          @user = @password = nil #ensure re-acquisition of credentials
+          reset_credentials
         end
       end
     end
 
-    private
+    def reset_credentials
+      @user = @password = nil #ensure re-acquisition of credentials
+    end
 
     def process_next_batch(bulk_token, &block)
       with_credentials do |user, password|
@@ -112,7 +112,7 @@ module HealthManager
           else
             logger.error("Too many consecutive bulk API errors.")
             varz.release_expected_stats
-            @user = @password = nil #ensure re-acquisition of credentials
+            reset_credentials
           end
         end
       end
@@ -123,7 +123,7 @@ module HealthManager
     end
 
     def batch_size
-      (@config['bulk_api'] && @config['bulk_api']['batch_size']) || "50"
+      (@config['bulk_api'] && @config['bulk_api']['batch_size']) || "500"
     end
 
     def bulk_url
@@ -156,7 +156,7 @@ module HealthManager
         NATS.timeout(sid,
                      get_param_from_config_or_default(:nats_request_timeout, @config)) do
           logger.error("bulk: NATS timeout getting bulk api credentials. Request ignored.")
-          varz.release_expected_stats
+          varz.release_expected_stats if varz.expected_stats_held?
         end
       end
     end
